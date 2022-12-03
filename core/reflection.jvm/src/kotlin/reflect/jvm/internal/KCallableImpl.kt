@@ -112,6 +112,24 @@ internal abstract class KCallableImpl<out R> : KCallable<R>, KTypeParameterOwner
         return if (isAnnotationConstructor) callAnnotationConstructor(args) else callDefaultMethod(args, null)
     }
 
+    fun callBy(args: ArgumentBucket): R {
+        if (isAnnotationConstructor) TODO("Consider whether to let ArgumentBucket inherit Map so that it can use existing processing or create a new function.")
+
+        args as ArgumentBucketImpl
+
+        return reflectionCall {
+            @Suppress("UNCHECKED_CAST")
+            if (args.isFullInitialized()) {
+                caller.call(args.arguments)
+            } else {
+                val caller = defaultCaller
+                    ?: throw KotlinReflectionInternalError("This callable does not support a default call: $descriptor")
+
+                caller.call(args.getDefaultArguments())
+            } as R
+        }
+    }
+
     private val _absentArguments = ReflectProperties.lazySoft {
         val parameterSize = parameters.size + (if (isSuspend) 1 else 0)
         val maskSize = (parameters.size + Integer.SIZE - 1) / Integer.SIZE
