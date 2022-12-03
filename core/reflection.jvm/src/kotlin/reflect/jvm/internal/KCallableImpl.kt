@@ -14,7 +14,9 @@ import java.lang.reflect.Type
 import java.lang.reflect.WildcardType
 import java.util.*
 import kotlin.coroutines.Continuation
+import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
 import kotlin.reflect.*
+import kotlin.reflect.full.callSuspendBy
 import kotlin.reflect.jvm.internal.calls.Caller
 import kotlin.reflect.jvm.javaType
 import kotlin.reflect.jvm.jvmErasure
@@ -116,6 +118,12 @@ internal abstract class KCallableImpl<out R> : KCallable<R>, KTypeParameterOwner
         if (isAnnotationConstructor) TODO("Consider whether to let ArgumentBucket inherit Map so that it can use existing processing or create a new function.")
 
         args as ArgumentBucketImpl
+
+        return callDefaultMethod(args, null)
+    }
+
+    internal fun callDefaultMethod(args: ArgumentBucketImpl, continuationArgument: Continuation<*>?): R {
+        if (isSuspend) args.setContinuationArgument(continuationArgument)
 
         return reflectionCall {
             @Suppress("UNCHECKED_CAST")
@@ -258,4 +266,17 @@ internal abstract class KCallableImpl<out R> : KCallable<R>, KTypeParameterOwner
 
         return null
     }
+}
+
+internal suspend fun <R> KCallableImpl<R>.callSuspendBy(args: ArgumentBucket): R {
+    if (!this.isSuspend) return callBy(args)
+    if (this !is KFunction<*>) throw IllegalArgumentException("Cannot callSuspendBy on a property $this: suspend properties are not supported yet")
+    val kCallable = asKCallableImpl() ?: throw KotlinReflectionInternalError("This callable does not support a default call: $this")
+    val result = suspendCoroutineUninterceptedOrReturn<R> { kCallable.callDefaultMethod(args as ArgumentBucketImpl, it) }
+    // If suspend function returns Unit and tail-call, it might appear, that it returns not Unit,
+    // see comment above replaceReturnsUnitMarkersWithPushingUnitOnStack for explanation.
+    // In this case, return Unit manually.
+    @Suppress("UNCHECKED_CAST")
+    if (returnType.classifier == Unit::class && !returnType.isMarkedNullable) return (Unit as R)
+    return result
 }
